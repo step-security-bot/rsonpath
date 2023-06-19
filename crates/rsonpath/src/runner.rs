@@ -92,7 +92,10 @@ impl ResolvedInput {
     fn run_engine<E: Engine>(self, engine: E, with_output: ResolvedOutput) -> Result<()> {
         match self.kind {
             ResolvedInputKind::Mmap => {
-                let mmap_result = unsafe { MmapInput::map_file(&self.file) };
+                let mmap_result = match &self.file {
+                    FileOrStdin::File(f) => unsafe { MmapInput::map_file(f) },
+                    FileOrStdin::Stdin(_) => todo!(),
+                };
 
                 match mmap_result {
                     Ok(input) => with_output.run_and_output(engine, input),

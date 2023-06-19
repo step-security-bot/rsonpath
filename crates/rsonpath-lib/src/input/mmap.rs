@@ -15,14 +15,15 @@
 //! by an order of magnitude to execute the query on a memory map than it is to simply read the
 //! file into main memory.
 
-use super::{borrowed::BorrowedBytesBlockIterator, error::InputError, in_slice, Input, LastBlock};
-use crate::query::JsonString;
-use memmap2::{Mmap, MmapAsRawDesc};
+use std::fs::File;
+
+use super::{error::InputError, in_slice, Input, InputBlockIterator, MAX_BLOCK_SIZE};
+use crate::{query::JsonString, FallibleIterator};
+use memmap2::{Mmap, MmapOptions};
 
 /// Input wrapping a memory mapped file.
 pub struct MmapInput {
     mmap: Mmap,
-    last_block: LastBlock,
 }
 
 impl MmapInput {
@@ -37,23 +38,27 @@ impl MmapInput {
     ///
     /// Calling mmap might result in an IO error.
     #[inline]
-    pub unsafe fn map_file<D: MmapAsRawDesc>(file_desc: D) -> Result<Self, InputError> {
-        match Mmap::map(file_desc) {
-            Ok(mmap) => {
-                let last_block = in_slice::pad_last_block(&mmap);
-                Ok(Self { mmap, last_block })
-            }
+    pub unsafe fn map_file(file: &File) -> Result<Self, InputError> {
+        let file_len = file.metadata()?.len() as usize;
+
+        let rem = file_len % MAX_BLOCK_SIZE;
+        let pad = if rem == 0 { 0 } else { MAX_BLOCK_SIZE - rem };
+
+        let mmap = MmapOptions::new().len(file_len + pad).map(file);
+
+        match mmap {
+            Ok(mmap) => Ok(Self { mmap }),
             Err(err) => Err(err.into()),
         }
     }
 }
 
 impl Input for MmapInput {
-    type BlockIterator<'a, const N: usize> = BorrowedBytesBlockIterator<'a, N>;
+    type BlockIterator<'a, const N: usize> = MmapBlockIterator<'a, N>;
 
     #[inline(always)]
     fn iter_blocks<const N: usize>(&self) -> Self::BlockIterator<'_, N> {
-        BorrowedBytesBlockIterator::new(&self.mmap, &self.last_block)
+        MmapBlockIterator::new(&self.mmap)
     }
 
     #[inline]
@@ -80,5 +85,46 @@ impl Input for MmapInput {
     #[inline]
     fn is_member_match(&self, from: usize, to: usize, label: &JsonString) -> bool {
         in_slice::is_member_match(&self.mmap, from, to, label)
+    }
+}
+
+/// Iterator over blocks of [`BorrowedBytes`] of size exactly `N`.
+pub struct MmapBlockIterator<'a, const N: usize> {
+    input: &'a [u8],
+    idx: usize,
+}
+
+impl<'a, const N: usize> MmapBlockIterator<'a, N> {
+    #[must_use]
+    #[inline(always)]
+    pub(super) fn new(bytes: &'a [u8]) -> Self {
+        Self { input: bytes, idx: 0 }
+    }
+}
+
+impl<'a, const N: usize> FallibleIterator for MmapBlockIterator<'a, N> {
+    type Item = &'a [u8];
+    type Error = InputError;
+
+    #[inline]
+    fn next(&mut self) -> Result<Option<Self::Item>, Self::Error> {
+        if self.idx >= self.input.len() {
+            Ok(None)
+        } else {
+            let block = &self.input[self.idx..self.idx + N];
+            self.idx += N;
+
+            Ok(Some(block))
+        }
+    }
+}
+
+impl<'a, const N: usize> InputBlockIterator<'a, N> for MmapBlockIterator<'a, N> {
+    type Block = &'a [u8];
+
+    #[inline(always)]
+    fn offset(&mut self, count: isize) {
+        assert!(count >= 0);
+        self.idx += count as usize * N;
     }
 }
