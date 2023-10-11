@@ -23,3 +23,23 @@ updates:
       - "V0ldek"
     commit-message:
       prefix: "chore(ci):"
+
+  - package-ecosystem: docker
+    directory: /.clusterfuzzlite
+    schedule:
+      interval: daily
+
+  - package-ecosystem: cargo
+    directory: /crates/rsonpath-test-codegen
+    schedule:
+      interval: daily
+
+  - package-ecosystem: cargo
+    directory: /crates/rsonpath-test
+    schedule:
+      interval: daily
+
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: daily
