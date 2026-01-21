@@ -39,6 +39,9 @@ on:
       - 'pdf/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   analyze:
     name: Analyze Rust
